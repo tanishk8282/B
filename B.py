@@ -2,10 +2,10 @@ import os
 import logging
 import requests
 from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
+from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 from io import BytesIO
 from PIL import Image
-from rembg import remove
+import asyncio
 
 # Set up logging
 logging.basicConfig(
@@ -14,7 +14,7 @@ logging.basicConfig(
 )
 
 # Configuration
-TOKEN = "8129685312:AAHRsV0JW4WpMVYPg3KnS2sLh0RrNRTGuY0"  # Replace with your actual bot token from BotFather
+TOKEN = "8129685312:AAHRsV0JW4WpMVYPg3KnS2sLh0RrNRTGuY0"
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send a welcome message when the command /start is issued."""
@@ -42,6 +42,9 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 async def process_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Process the user's image and remove the background."""
+    # Import rembg here to avoid loading it unnecessarily on startup
+    from rembg import remove
+    
     # Send a processing message
     processing_message = await update.message.reply_text("🔄 Processing your image... Please wait.")
     
@@ -70,12 +73,16 @@ async def process_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             output_buffer.seek(0)
             
             # Send the processed image back to the user
-            await context.bot.delete_message(
-                chat_id=update.effective_chat.id,
-                message_id=processing_message.message_id
-            )
+            try:
+                await context.bot.delete_message(
+                    chat_id=update.effective_chat.id,
+                    message_id=processing_message.message_id
+                )
+            except Exception as e:
+                logging.error(f"Error deleting message: {e}")
+                
             await update.message.reply_photo(
-                output_buffer,
+                photo=output_buffer,
                 caption="✨ Here's your image with the background removed!"
             )
         else:
@@ -84,21 +91,43 @@ async def process_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     except Exception as e:
         logging.error(f"Error processing image: {e}")
         await update.message.reply_text(
-            "❌ Sorry, an error occurred while processing your image. Please try again with a different image."
+            f"❌ Sorry, an error occurred while processing your image: {str(e)[:100]}... Please try again with a different image."
         )
 
-def main() -> None:
+async def main() -> None:
     """Start the bot."""
     # Create the Application
-    application = ApplicationBuilder().token(TOKEN).build()
+    application = Application.builder().token(TOKEN).build()
 
     # Add handlers
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(MessageHandler(filters.PHOTO, process_image))
 
-    # Run the bot until the user presses Ctrl-C
-    application.run_polling()
+    # Start the Bot
+    await application.initialize()
+    await application.start()
+    await application.run_polling()
 
 if __name__ == "__main__":
-    main()
+    # Create a requirements.txt file if it doesn't exist
+    if not os.path.exists("requirements.txt"):
+        with open("requirements.txt", "w") as f:
+            f.write("python-telegram-bot>=20.0\nrembg>=2.0.0\nPillow>=9.0.0\nrequests>=2.25.0\n")
+        print("Created requirements.txt file")
+    
+    try:
+        # Check if the rembg module is installed, if not install it
+        try:
+            import rembg
+        except ImportError:
+            print("Installing required packages...")
+            os.system("pip install -r requirements.txt")
+            print("Packages installed successfully")
+    
+        # Run the bot
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("Bot stopped by user")
+    except Exception as e:
+        print(f"Error: {e}")
